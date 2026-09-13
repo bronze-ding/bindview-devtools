@@ -1,0 +1,20 @@
+{
+  "name": "bindview-devtools",
+  "version": "1.0.0",
+  "description": "Bindview 浏览器调试插件 —— 组件树 / 状态检查 / 事件时间线",
+  "private": true,
+  "keywords": [
+    "bindview",
+    "devtools",
+    "chrome-extension",
+    "debugger"
+  ],
+  "license": "MIT",
+  "author": "canlie",
+  "scripts": {
+    "start": "echo 请开启开发者模式后『加载已解压的扩展程序』指向本目录:Chrome 用 chrome://extensions,Edge 用 edge://extensions"
+  },
+  "engines": {
+    "chromium": ">=111"
+  }
+}

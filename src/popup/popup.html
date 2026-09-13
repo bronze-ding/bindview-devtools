@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Bindview DevTools</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <header class="head">
+    <img class="logo" src="../../assets/icons/icon128.png" alt="Bindview DevTools">
+    <div class="title">
+      <span class="name">Bindview DevTools</span>
+      <span class="version" id="version">v—</span>
+    </div>
+  </header>
+
+  <div class="status" id="status">
+    <span class="dot" id="dot"></span>
+    <span id="statusText">正在检测…</span>
+  </div>
+
+  <div class="rows">
+    <div class="row">
+      <span class="k">组件数量</span>
+      <span class="v" id="count">—</span>
+    </div>
+    <div class="row">
+      <span class="k">使用方式</span>
+      <span class="v">F12 → Bindview 面板</span>
+    </div>
+  </div>
+
+  <p class="hint" id="hint">正在读取当前页面的检测结果…</p>
+
+  <footer class="foot">
+    <a href="https://github.com/bronze-ding/bindview" target="_blank" rel="noreferrer">bindview 仓库</a>
+    <a href="https://github.com/bronze-ding/bindview-router" target="_blank" rel="noreferrer">bindview-router</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

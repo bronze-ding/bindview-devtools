@@ -171,6 +171,56 @@ function flashNode(uid) {
   setTimeout(function () { node.classList.remove('bv-node--flash') }, 450)
 }
 
+/* ------------------ 组件更新统计增量同步 ------------------ */
+// 组件「更新」时后端只推增量(component:updated),不会再重发全量快照;
+// 若不同步,树上的徽标会停留在上次快照时的旧值,而检查器每次 inspect 都取最新值,
+// 于是同一组件的两处统计出现漂移。这里把增量写回快照节点并就地刷新徽标,
+// 并用短节流合并高频更新,避免频繁操作 DOM。
+
+const pendingStats = new Map()
+let statsTimer = null
+
+/** 在组件树快照中定位 uid 对应的节点 */
+function findTreeNode(node, uid) {
+  if (!node) return null
+  if (node.uid === uid) return node
+  if (!node.children) return null
+  for (let i = 0; i < node.children.length; i++) {
+    const found = findTreeNode(node.children[i], uid)
+    if (found) return found
+  }
+  return null
+}
+
+function applyNodeStats(data) {
+  const snapshot = store.state.snapshot
+  if (!snapshot || !snapshot.apps) return
+
+  let target = null
+  for (let i = 0; i < snapshot.apps.length; i++) {
+    target = findTreeNode(snapshot.apps[i].root, data.uid)
+    if (target) break
+  }
+  if (!target) return
+
+  target.updateCount = data.updateCount || 0
+  target.lastDuration = typeof data.lastDuration === 'number' ? data.lastDuration : 0
+  if (typeof data.totalDuration === 'number') target.totalDuration = data.totalDuration
+
+  tree.updateStats(target)
+}
+
+function scheduleNodeStats(data) {
+  if (!data || !data.uid) return
+  pendingStats.set(data.uid, data)
+  if (statsTimer) return
+  statsTimer = setTimeout(function () {
+    statsTimer = null
+    pendingStats.forEach(function (item) { applyNodeStats(item) })
+    pendingStats.clear()
+  }, 120)
+}
+
 const api = {
   setTab: function (tab) {
     store.set({ activeTab: tab })
@@ -586,6 +636,8 @@ bridge.onMessage(function (message) {
 
     case 'component:updated':
       if (message.data && message.data.uid) {
+        // 同步树徽标统计(与检查器共用同一份后端 meta)
+        scheduleNodeStats(message.data)
         flashNode(message.data.uid)
         if (store.state.selectedUid === message.data.uid) refreshSelected()
       }

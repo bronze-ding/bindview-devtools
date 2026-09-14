@@ -17,19 +17,41 @@ function filterTree(node, keyword) {
   return Object.assign({}, node, { children: children })
 }
 
+function round(n) {
+  return Math.round((Number(n) || 0) * 100) / 100
+}
+
+/** 徽标正文:更新次数 · 最近渲染耗时(与检查器共用同一份 meta 数据) */
+function badgeText(node) {
+  const count = node.updateCount || 0
+  if (!count) return ''
+  return '×' + count + ' · ' + round(node.lastDuration) + 'ms'
+}
+
+/** 徽标提示:时间维度与检查器头部完全一致 */
+function badgeTitle(node) {
+  const count = node.updateCount || 0
+  const total = round(node.totalDuration)
+  return '更新 ' + count + ' 次\n' +
+    '最近渲染 ' + round(node.lastDuration) + ' ms\n' +
+    '平均 ' + round(count ? total / count : 0) + ' ms\n' +
+    '累计 ' + total + ' ms'
+}
+
 /** 渲染更新统计徽标(仅统计有更新记录的组件) */
 function renderUpdateBadge(node) {
-  const count = node.updateCount || 0
-  if (!count) return null
-  const last = typeof node.lastDuration === 'number' ? node.lastDuration : 0
-  const total = typeof node.totalDuration === 'number' ? node.totalDuration : 0
-  const avg = count ? total / count : 0
-  const round = function (n) { return Math.round(n * 100) / 100 }
-  return el('span', {
-    class: 'bv-node-meta',
-    text: '×' + count + ' · ' + round(last) + 'ms',
-    title: '更新 ' + count + ' 次\n最近渲染 ' + round(last) + ' ms\n平均 ' + round(avg) + ' ms\n累计 ' + round(total) + ' ms'
-  })
+  const text = badgeText(node)
+  if (!text) return null
+  return el('span', { class: 'bv-node-meta', text: text, title: badgeTitle(node) })
+}
+
+/** 生成节点行的选择器(uid 由框架生成,仍做转义以防特殊字符) */
+function uidSelector(uid) {
+  const value = String(uid)
+  const safe = (typeof CSS !== 'undefined' && CSS.escape)
+    ? CSS.escape(value)
+    : value.replace(/["\\]/g, '\\$&')
+  return '.bv-node[data-uid="' + safe + '"]'
 }
 
 export function createComponentTree(container, api) {
@@ -196,5 +218,37 @@ export function createComponentTree(container, api) {
     })
   }
 
-  return { render: render }
+  /**
+   * 就地更新某个节点的更新统计
+   *
+   * 组件「更新」时后端只推增量(component:updated)、不再重发全量快照,
+   * 因此这里只更新对应节点的徽标 DOM,而不是重建整棵树:
+   * 既避免高频更新时的抖动与滚动位置丢失,又保证与检查器数值一致。
+   *
+   * @param {Object} node 已同步过统计字段的树节点
+   */
+  function updateStats(node) {
+    if (!node || !node.uid) return
+    const row = document.querySelector(uidSelector(node.uid))
+    if (!row) return
+
+    const text = badgeText(node)
+    let badge = row.querySelector('.bv-node-meta')
+
+    if (!text) {
+      if (badge && badge.parentNode) badge.parentNode.removeChild(badge)
+      return
+    }
+    if (!badge) {
+      // 与 renderNode 中的顺序保持一致:name → route → badge → 子节点数
+      badge = el('span', { class: 'bv-node-meta' })
+      const countEl = row.querySelector('.bv-node-count')
+      if (countEl) row.insertBefore(badge, countEl)
+      else row.appendChild(badge)
+    }
+    badge.textContent = text
+    badge.title = badgeTitle(node)
+  }
+
+  return { render: render, updateStats: updateStats }
 }

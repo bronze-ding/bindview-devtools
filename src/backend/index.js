@@ -194,10 +194,12 @@
       timestamp: payload.timestamp || now()
     })
     // 不做面板在线判断(原因同上),保证面板重新握手后能持续收到增量更新
+    // 一并推送 totalDuration,使组件树徽标与检查器能基于同一份数据展示
     post('component:updated', {
       uid: payload.uid,
       updateCount: meta.updateCount,
-      lastDuration: meta.lastDuration
+      lastDuration: meta.lastDuration,
+      totalDuration: meta.totalDuration || 0
     })
   }
 

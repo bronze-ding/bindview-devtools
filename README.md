@@ -203,7 +203,8 @@ export function emitDevtools(event, payload) {
 - 首次连接自动展开全部节点;点击 `▸/▾` 或节点行可折叠 / 展开
 - 搜索框下方提供 **「全展开」** / **「全折叠」** 两个快捷操作
 - 顶部搜索框按名称过滤(保留命中节点的祖先链)
-- 节点右侧的 **统计徽标**(`×N · Xms`)显示更新次数与最近一次渲染耗时,悬停可查看平均 / 累计耗时
+- 节点右侧的 **统计徽标**(`×N · Xms`)显示更新次数与最近一次渲染耗时,悬停可查看平均 / 累计耗时;
+  该徽标与右侧检查器头部**展示同一份后端 `meta` 数据**,组件更新时会通过增量事件实时同步(不会出现两处数值不一致)
 - **悬停**节点 → 页面中高亮对应 DOM(高亮由右上角「高亮」开关统一控制,**默认开启**,关闭后悬停不再高亮)
 - **点击**节点 → 仅在右侧显示组件详情,**不再触发页面高亮**;组件更新时节点会闪烁提示
 - **路由标注** → 仅路由组件:`Switch` 节点显示该级别命中路径、`Link` 节点显示跳转目标
@@ -373,7 +374,7 @@ $vm.methods.increment()  // 调用组件方法
 | type | 说明 |
 | --- | --- |
 | `snapshot` | 组件树全量快照 `{ apps, count, timestamp }` |
-| `component:updated` | 组件更新 `{ uid, updateCount, lastDuration }` |
+| `component:updated` | 组件更新 `{ uid, updateCount, lastDuration, totalDuration }`(面板据此就地同步树徽标统计) |
 | `state:invalid` | 组件已销毁,面板应清除选中 |
 | `timeline:event` / `timeline:list` | 单条 / 批量事件 |
 | `highlight:changed` | 高亮开关状态变更 |

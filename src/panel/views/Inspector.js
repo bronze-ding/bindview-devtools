@@ -465,7 +465,8 @@ function renderSection(section, ins, api) {
 /* ----------------------------- 头部 ----------------------------- */
 
 function renderHeader(ins, api) {
-  const duration = typeof ins.lastDuration === 'number' ? ins.lastDuration.toFixed(2) : '0.00'
+  // 与组件树徽标使用同一套数值口径(round 保留两位小数),避免两处显示不一致
+  const duration = round(ins.lastDuration)
   const count = ins.updateCount || 0
   const total = typeof ins.totalDuration === 'number' ? ins.totalDuration : 0
 

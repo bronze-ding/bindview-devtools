@@ -2,11 +2,12 @@
 
 一款面向 [bindview.js](https://github.com/bronze-ding/bindview) 应用的浏览器调试插件
 
-- 🌳 **组件树** —— 展示应用根实例与全部子组件的层级结构
-- 🔍 **状态检查** —— 序列化响应式 `data`、`props`、`refs`、`methods` 与生命周期
-- ✏️ **状态编辑** —— 就地修改组件数据,直接写回 bindview 的 Proxy 并触发响应式更新
+- 🌳 **组件树** —— 展示应用根实例与全部子组件的层级结构,支持搜索与全展开 / 全折叠
+- 🔍 **状态检查** —— 序列化响应式 `data`、`props`、`refs`、`methods` 与生命周期,并展示更新次数与渲染耗时(最近 / 平均 / 累计)
+- ✏️ **状态编辑** —— 就地修改基础类型、以 JSON 编辑对象 / 数组、删除与新增属性,直接写回 bindview 的 Proxy 并触发响应式更新
+- 🖥️ **控制台联动** —— 把选中组件实例暴露为页面控制台的 `$vm`,便于手动调试
 - 🎯 **组件高亮** —— 鼠标悬停组件节点时在页面中高亮对应 DOM(由右上角开关统一控制),另支持「定位到页面」滚动定位
-- ⏱️ **事件时间线** —— 记录组件创建 / 更新(含渲染耗时)/ 销毁 / 状态修改 / 路由跳转
+- ⏱️ **事件时间线** —— 记录组件创建 / 更新(含渲染耗时)/ 销毁 / 状态修改 / 路由跳转,支持暂停记录与关键字过滤
 - 🧭 **路由面板** —— 展示 bindview-router 的模式、当前 / 上一路由、query、各级 `Switch` 命中路径、路由表,并支持编程式导航
 - 🔌 **状态徽标** —— 工具栏图标固定为彩色 logo;检测到 bindview 应用时显示**绿色徽标 + 组件数量**
 
@@ -200,7 +201,9 @@ export function emitDevtools(event, payload) {
 
 - 组件名以 `<Name>` 形式展示,便于与普通 DOM 节点区分
 - 首次连接自动展开全部节点;点击 `▸/▾` 或节点行可折叠 / 展开
+- 搜索框下方提供 **「全展开」** / **「全折叠」** 两个快捷操作
 - 顶部搜索框按名称过滤(保留命中节点的祖先链)
+- 节点右侧的 **统计徽标**(`×N · Xms`)显示更新次数与最近一次渲染耗时,悬停可查看平均 / 累计耗时
 - **悬停**节点 → 页面中高亮对应 DOM(高亮由右上角「高亮」开关统一控制,**默认开启**,关闭后悬停不再高亮)
 - **点击**节点 → 仅在右侧显示组件详情,**不再触发页面高亮**;组件更新时节点会闪烁提示
 - **路由标注** → 仅路由组件:`Switch` 节点显示该级别命中路径、`Link` 节点显示跳转目标
@@ -224,11 +227,49 @@ export function emitDevtools(event, payload) {
 
 点击高亮显示的值即可就地编辑:
 
-- 字符串 / 数字 → 文本框(`Enter` 提交,`Esc` 取消)
+- 字符串 / 数字 / `BigInt` → 文本框(`Enter` 提交,`Esc` 取消)
 - 布尔值 → 下拉选择
+- `null` / `undefined` → 文本框,留空表示维持原值,填写则按 **JSON 字面量**解析(`1`、`"a"`、`true`、`{}` …)
 
 提交后直接写回 bindview 的 Proxy(`parent[key] = value`),因此会像页面内修改数据一样触发调度器批量更新,
 可在时间线中看到 `状态修改` 与随之而来的 `组件更新`。
+
+#### 结构化编辑(仅 `data` 分区)
+
+| 操作 | 入口 | 说明 |
+| --- | --- | --- |
+| 以 JSON 编辑某个对象 / 数组 | 该值行首的 **「JSON」** 按钮 | 弹出 JSON 编辑器,保存后整值写回 |
+| 以 JSON 编辑整个 `data` | 分区标题右侧的 **「编辑 JSON」** | 逐键增删,响应式仍按字段粒度触发 |
+| 删除属性 / 数组元素 | 该行右侧的 **「×」** | 对象走 `delete`,`数组`走 `splice` |
+| 新增属性 | 分区底部的「新增属性」行 | 属性名 + 值(JSON 或纯文本) |
+
+**值解析规则(就地编辑与新增属性共用)**:输入边实时提示将按什么类型写入。
+
+| 输入 | 结果 |
+| --- | --- |
+| `1`、`true`、`"a"`、`{...}`、`[...]`、`null` | 合法 JSON → 按对应 JSON 类型写入 |
+| `hello`(裸文本) | 非 JSON → 按**字符串**写入,等价于 `this.data.x = "hello"` |
+| `{a:1}`(以 `{` / `[` 开头但语法错误) | 明确提示 JSON 语法错误,不会静默当成字符串 |
+
+> 新增 / 写入的结果会**直接显示在新增行内**(成功提示「已新增 x = 值」、失败给出具体原因并保留输入),
+> 同时写入成功与否都会反映到 `data` 列表与时间线上,不存在「点了没反应」的情况。
+>
+> **组件未定义 `data` 时**(bindview 在 `config.data` 未定义会把 `vm.data` 置为 `null`,面板会显示 `data: null`),
+> 新增行会提供「**初始化 data**」按钮:点击后复用框架的 `vm._DataProxy({})` 创建一个**空的响应式 data**,
+> 之后即可正常新增属性并触发响应式更新。
+>
+> JSON 编辑器在读取时会做深度 / 条目截断(`DOM`、函数、循环引用转为可读字符串),
+> 超过 200KB 时会给出提示;保存前会做一次 JSON 语法校验,避免写入非法内容。
+
+#### 控制台联动
+
+检查器头部的 **「控制台选中」** 会把当前组件实例挂到页面 `window.$vm`(同时提供 `window.$bv` 别名),
+可在开发者工具 Console 中直接以 `$vm` 访问其 `data` / `methods`:
+
+```js
+$vm.data.count           // 读取响应式数据
+$vm.methods.increment()  // 调用组件方法
+```
 
 #### methods 专区
 
@@ -243,8 +284,11 @@ export function emitDevtools(event, payload) {
 
 ### 事件时间线
 
-- 通过顶部筛选按钮查看「全部 / 更新 / 创建 / 销毁 / 状态 / 路由」
+- 通过顶部筛选按钮查看「全部 / 更新 / 创建 / 销毁 / 状态 / 方法 / 路由」
 - 「更新」事件附带本次 `render + diff` 耗时
+- 右侧 **过滤框** 按事件名 / 目标 / 组件名做关键字筛选
+- **「暂停 / 继续」** 控制记录:暂停期间新事件进入缓冲区(按钮上显示待入条数),继续时一次性并入,**不丢事件**
+- 「清空」同时清理时间线与缓冲区(仅清调试器记录)
 - 点击事件行可跳转到对应组件(路由事件无关联组件时不响应点击)
 
 ### 路由
@@ -269,7 +313,7 @@ export function emitDevtools(event, payload) {
 | 项 | 选项 | 说明 |
 | --- | --- | --- |
 | 主题 | 黑夜 / 白天 / 跟随系统 | 通过 `<html data-theme>` + CSS 变量整体切换明暗;`跟随系统` 读取 `prefers-color-scheme` 并实时响应 |
-| 面板布局 | 左右 / 上下 | 组件视图:左右为「组件树 \| 检查器」并排,上下为「组件树在上、检查器在下」;分隔线可拖拽调整 |
+| 面板布局 | 左右 / 上下 | 组件视图:左右为「组件树 \| 检查器」并排,上下为「组件树在上、检查器在下」;分隔线可拖拽调整,**两种布局各自记住拖拽后的尺寸**(切换时不会串用,也不会残留锁死宽度) |
 | 高亮 | 开 / 关 | 是否在鼠标悬停组件节点时高亮页面 DOM(默认开) |
 
 主题与布局会写入 `chrome.storage.local`(键 `bindview-devtools:prefs`),重开面板后保持不变。
@@ -340,9 +384,12 @@ export function emitDevtools(event, payload) {
 
 `{ type: 'rpc', id, method, params }` → `{ type: 'rpc:response', data: { id, result, error } }`
 
-可用的 `method`:`getTree`、`inspect`、`setState`、`deleteState`、`invokeMethod`、`highlight`、`hover`、
-`unhighlight`、`scrollTo`、`setHighlightEnabled`、`getTimeline`、`clearTimeline`、`rescan`、
+可用的 `method`:`getTree`、`inspect`、`setState`、`deleteState`、`getRawJson`、`initData`、`invokeMethod`、`exposeInstance`、
+`highlight`、`hover`、`unhighlight`、`scrollTo`、`setHighlightEnabled`、`getTimeline`、`clearTimeline`、`rescan`、
 `getRouterInfo`、`routerNavigate`、`routerAction`、`clearNavigation`(后四者服务于「路由」页签)。
+
+> `setState` 的 `path` 为空数组时表示**整体替换 `data` 根对象**(逐键增删);
+> `getRawJson` 返回目标值的 JSON 文本,`exposeInstance` 把实例挂到页面 `window.$vm`。
 
 ---
 

@@ -1,4 +1,4 @@
-import { el, clear, formatTime } from '../lib/dom.js'
+import { el, clear, formatTime, debounce } from '../lib/dom.js'
 
 const EVENT_LABELS = {
   'app:init': '应用初始化',
@@ -36,6 +36,21 @@ export function createEventsView(container, api) {
     { id: 'route:navigate', label: '路由' }
   ]
 
+  const searchInput = el('input', {
+    class: 'bv-input bv-input--filter',
+    type: 'text',
+    placeholder: '过滤组件 / 目标'
+  })
+  searchInput.addEventListener('input', debounce(function () {
+    api.setTimelineFilter(searchInput.value.trim().toLowerCase())
+  }, 150))
+
+  const pauseBtn = el('button', {
+    class: 'bv-btn bv-btn--sm',
+    title: '暂停后新事件会先缓存,继续时一次性并入',
+    onclick: function () { api.toggleTimelinePause() }
+  }, '暂停')
+
   const toolbar = el('div', { class: 'bv-toolbar' }, [
     el('div', { class: 'bv-filters' }, filters.map(function (item) {
       const btn = el('button', {
@@ -47,6 +62,8 @@ export function createEventsView(container, api) {
       return btn
     })),
     el('div', { class: 'bv-toolbar-right' }, [
+      searchInput,
+      pauseBtn,
       el('button', {
         class: 'bv-btn bv-btn--sm',
         onclick: function () { api.clearTimeline() }
@@ -55,7 +72,7 @@ export function createEventsView(container, api) {
   ])
 
   const listBox = el('div', { class: 'bv-events' })
-  const pane = el('section', { class: 'bv-view-body' }, [toolbar, listBox])
+  const pane = el('section', { class: 'bv-view-body bv-timeline' }, [toolbar, listBox])
   container.appendChild(pane)
 
   let lastKey = null
@@ -74,22 +91,50 @@ export function createEventsView(container, api) {
   }
   applyFilterButtons()
 
-  function visibleEvents(timeline) {
-    if (filter === 'all') return timeline
-    return timeline.filter(function (item) { return item.event === filter })
+  /** 先按事件类型过滤,再按关键字匹配组件名 / 目标 / 事件名 */
+  function visibleEvents(timeline, keyword) {
+    let list = filter === 'all'
+      ? timeline
+      : timeline.filter(function (item) { return item.event === filter })
+    if (!keyword) return list
+    return list.filter(function (item) {
+      const label = (EVENT_LABELS[item.event] || item.event || '').toLowerCase()
+      const target = ((item.path || '') + ' ' + (item.name || '')).toLowerCase()
+      return label.indexOf(keyword) > -1 || target.indexOf(keyword) > -1
+    })
   }
 
   function render(state) {
-    const events = visibleEvents(state.timeline)
-    const key = filter + '|' + events.length + '|' + (events.length ? events[events.length - 1].id : 0)
+    const keyword = state.timelineFilter || ''
+    const paused = !!state.timelinePaused
+    const bufferLength = (state.pausedBuffer || []).length
+
+    pauseBtn.textContent = paused
+      ? '继续' + (bufferLength ? '(' + bufferLength + ')' : '')
+      : '暂停'
+    pauseBtn.classList.toggle('bv-btn--active', paused)
+
+    const events = visibleEvents(state.timeline, keyword)
+    const key = filter + '|' + keyword + '|' + (paused ? 'p' : 'r') + '|' + events.length +
+      '|' + (events.length ? events[events.length - 1].id : 0)
     if (key === lastKey) return
     lastKey = key
 
     const atBottom = listBox.scrollTop + listBox.clientHeight >= listBox.scrollHeight - 20
     clear(listBox)
 
+    if (paused && bufferLength) {
+      listBox.appendChild(el('div', {
+        class: 'bv-timeline-paused',
+        text: '已暂停记录,暂存 ' + bufferLength + ' 条事件,点击「继续」后并入'
+      }))
+    }
+
     if (!events.length) {
-      listBox.appendChild(el('div', { class: 'bv-empty', text: '暂无事件记录' }))
+      listBox.appendChild(el('div', {
+        class: 'bv-empty',
+        text: state.timeline.length ? '没有匹配的事件' : '暂无事件记录'
+      }))
       return
     }
 
@@ -97,6 +142,7 @@ export function createEventsView(container, api) {
       const row = el('div', {
         class: 'bv-event ' + (EVENT_CLASS[item.event] || ''),
         dataset: item.uid ? { uid: item.uid } : {},
+        title: item.uid ? '点击查看该组件' : '',
         onclick: function () {
           if (item.uid) api.select(item.uid)
         }

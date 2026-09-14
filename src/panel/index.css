@@ -1153,3 +1153,216 @@ img.bv-logo:hover {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ------------------------- 组件树(增强) ------------------------- */
+
+/* 搜索框下方的工具行:全展开 / 全折叠 */
+.bv-tree-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* 节点上的更新统计徽标(更新次数 · 最近渲染耗时) */
+.bv-node-meta {
+  flex: none;
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--bv-text-dim);
+  background: var(--bv-fill);
+  border-radius: 8px;
+  padding: 0 6px;
+}
+
+/* ------------------------- 检查器(增强) ------------------------- */
+
+/* data 分区:删除属性的入口(浮于行尾,避免影响既有排版) */
+.bv-entry-del {
+  float: right;
+  width: 16px;
+  height: 16px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 3px;
+  color: var(--bv-text-dim);
+  cursor: pointer;
+  border: 1px solid transparent;
+  font-size: 12px;
+  user-select: none;
+}
+
+.bv-entry-del:hover {
+  color: var(--bv-red);
+  border-color: rgba(244, 135, 113, 0.5);
+  background: rgba(244, 135, 113, 0.12);
+}
+
+/* 容器头的「JSON」编辑入口 */
+.bv-obj-json {
+  flex: none;
+  margin-left: 6px;
+  padding: 0 6px;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--bv-blue);
+  background: var(--bv-fill);
+  border: 1px solid var(--bv-border-soft);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.bv-obj-json:hover {
+  border-color: var(--bv-blue);
+  background: rgba(86, 156, 214, 0.15);
+}
+
+/* 分区标题右侧的「编辑 JSON」按钮 */
+.bv-section-action {
+  margin-left: auto;
+}
+
+/* data 分区底部的新增属性行 */
+.bv-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--bv-border-soft);
+}
+
+.bv-edit--key {
+  width: 120px;
+  min-width: 0;
+}
+
+.bv-edit--value {
+  flex: 1;
+  min-width: 120px;
+}
+
+/* JSON 编辑模态框 */
+.bv-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.bv-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(720px, 92vw);
+  max-height: 86vh;
+  padding: 12px;
+  background: var(--bv-bg-panel);
+  border: 1px solid var(--bv-border);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.bv-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bv-modal-name {
+  color: var(--bv-text-strong);
+  font-weight: 600;
+}
+
+.bv-modal-subtitle {
+  color: var(--bv-text-dim);
+  font-size: 10px;
+}
+
+.bv-modal-warn {
+  color: var(--bv-orange);
+}
+
+.bv-modal-error {
+  color: var(--bv-red);
+  min-height: 14px;
+}
+
+.bv-modal-textarea {
+  flex: 1;
+  min-height: 220px;
+  resize: vertical;
+  background: var(--bv-bg);
+  border: 1px solid var(--bv-border);
+  border-radius: 4px;
+  color: var(--bv-text);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px;
+  outline: none;
+}
+
+.bv-modal-textarea:focus {
+  border-color: var(--bv-accent);
+}
+
+.bv-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* ------------------------- 时间线(增强) ------------------------- */
+
+/* 工具栏 + 列表纵向撑满 */
+.bv-timeline {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.bv-timeline .bv-events {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.bv-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bv-input--filter {
+  min-width: 160px;
+}
+
+/* 暂停记录时的提示条 */
+.bv-timeline-paused {
+  padding: 4px 10px;
+  color: var(--bv-orange);
+  background: rgba(206, 145, 120, 0.12);
+  border-bottom: 1px solid var(--bv-border-soft);
+}
+
+/* 新增属性行:实时解析提示 / 错误提示 / 禁用说明 */
+.bv-add-hint {
+  color: var(--bv-text-dim);
+  font-size: 10px;
+}
+
+.bv-add-hint--error {
+  color: var(--bv-red);
+}
+
+.bv-add-row--disabled {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--bv-border-soft);
+}

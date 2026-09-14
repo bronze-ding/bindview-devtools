@@ -17,6 +17,12 @@ export function createStore(initialState) {
     inspectionLoading: false,
     /** 事件时间线 */
     timeline: [],
+    /** 时间线是否暂停记录 */
+    timelinePaused: false,
+    /** 暂停期间缓存的事件(继续记录时并入时间线) */
+    pausedBuffer: [],
+    /** 时间线筛选关键字(按事件名 / 目标 / 组件名过滤) */
+    timelineFilter: '',
     /** 高亮开关 */
     highlightEnabled: true,
     /** 当前面板页签: components | router | timeline | settings */

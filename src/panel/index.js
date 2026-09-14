@@ -200,6 +200,29 @@ const api = {
     store.set({ expanded: expanded, treeRevision: store.state.treeRevision + 1 })
   },
 
+  /** 展开全部节点(autoExpanded 置位,避免被首次快照的自动展开覆盖) */
+  expandAll: function () {
+    const snapshot = store.state.snapshot
+    const uids = []
+    if (snapshot && snapshot.apps) {
+      snapshot.apps.forEach(function (app) { collectUids(app.root, uids) })
+    }
+    store.set({
+      expanded: new Set(uids),
+      autoExpanded: true,
+      treeRevision: store.state.treeRevision + 1
+    })
+  },
+
+  /** 折叠全部节点 */
+  collapseAll: function () {
+    store.set({
+      expanded: new Set(),
+      autoExpanded: true,
+      treeRevision: store.state.treeRevision + 1
+    })
+  },
+
   select: function (uid) {
     // 从时间线 / 路由点击时切回「组件」页签,否则选中结果不可见。
     // 注意:选中不再触发页面高亮 —— 高亮统一由右上角「高亮」开关(鼠标悬停)控制
@@ -288,6 +311,29 @@ const api = {
     })
   },
 
+  /** 时间线筛选关键字 */
+  setTimelineFilter: function (value) {
+    store.set({ timelineFilter: value })
+  },
+
+  /**
+   * 暂停 / 继续记录时间线
+   * 暂停期间事件进入 pausedBuffer,继续时一次性并入(不丢事件)
+   */
+  toggleTimelinePause: function () {
+    const paused = !store.state.timelinePaused
+    if (!paused) {
+      const buffer = store.state.pausedBuffer || []
+      if (buffer.length) {
+        const timeline = store.state.timeline.concat(buffer)
+        if (timeline.length > 500) timeline.splice(0, timeline.length - 500)
+        store.set({ timeline: timeline, pausedBuffer: [], timelinePaused: false })
+        return
+      }
+    }
+    store.set({ timelinePaused: paused })
+  },
+
   refresh: function () {
     bridge.send({ type: 'panel:refresh' })
     api.fetchTree(0)
@@ -346,7 +392,7 @@ const api = {
 
   clearTimeline: function () {
     rpc.call('clearTimeline').catch(function () { /* ignore */ })
-    store.set({ timeline: [] })
+    store.set({ timeline: [], pausedBuffer: [] })
   },
 
   refreshInspection: function () {
@@ -369,8 +415,12 @@ const api = {
     })
   },
 
+  /**
+   * 写入 data
+   * @returns {Promise<{ok:Boolean, error:String}>} 调用方可据此做行内反馈
+   */
   setState: function (uid, source, path, descriptor) {
-    rpc.call('setState', { uid: uid, source: source, path: path, value: descriptor })
+    return rpc.call('setState', { uid: uid, source: source, path: path, value: descriptor })
       .then(function (result) {
         if (!result || !result.ok) {
           store.set({ error: (result && result.error) || '写入失败' })
@@ -378,11 +428,71 @@ const api = {
           store.set({ error: null })
         }
         api.refreshInspection()
+        return result || { ok: false, error: '写入失败' }
+      })
+      .catch(function (e) {
+        store.set({ error: e.message })
+        api.refreshInspection()
+        return { ok: false, error: e.message }
+      })
+  },
+
+  /** 删除 data 上的属性 / 数组元素 */
+  deleteState: function (uid, source, path) {
+    rpc.call('deleteState', { uid: uid, source: source, path: path })
+      .then(function (result) {
+        if (!result || !result.ok) {
+          store.set({ error: (result && result.error) || '删除失败' })
+        } else {
+          store.set({ error: null })
+          api.toast('已删除 ' + source + '.' + path.join('.'))
+        }
+        api.refreshInspection()
       })
       .catch(function (e) {
         store.set({ error: e.message })
         api.refreshInspection()
       })
+  },
+
+  /** 读取 data 目标值的 JSON 文本(供「以 JSON 编辑」) */
+  getRawJson: function (uid, source, path) {
+    return rpc.call('getRawJson', { uid: uid, source: source, path: path })
+  },
+
+  /**
+   * 为「未定义 data」的组件初始化一个空的响应式 data
+   * @returns {Promise<{ok:Boolean, existed:Boolean, error:String}>}
+   */
+  initData: function (uid) {
+    return rpc.call('initData', { uid: uid }).then(function (res) {
+      if (res && res.ok) {
+        api.toast(res.existed ? 'data 已存在' : '已初始化 data,可新增属性')
+        api.refreshInspection()
+      }
+      return res || { ok: false, error: '初始化失败' }
+    }).catch(function (e) {
+      return { ok: false, error: e.message }
+    })
+  },
+
+  /** 把选中组件暴露到页面控制台(window.$vm),并尝试在控制台中显示 */
+  exposeInConsole: function () {
+    const uid = store.state.selectedUid
+    if (!uid) return
+    rpc.call('exposeInstance', { uid: uid }).then(function (res) {
+      if (!res || !res.ok) {
+        api.toast((res && res.error) || '无法暴露实例')
+        return
+      }
+      api.toast('已在控制台暴露 $vm' + (res.name ? '(<' + res.name + '>)' : ''))
+      try {
+        // 命令式 API 可能不可用,失败时忽略(用户仍可手动输入 $vm)
+        chrome.devtools.inspectedWindow.eval('inspect(window.$vm)')
+      } catch (e) { /* ignore */ }
+    }).catch(function (e) {
+      api.toast(e.message)
+    })
   }
 }
 
@@ -417,6 +527,13 @@ store.subscribe(render)
 /* ------------------------- 事件处理 ------------------------- */
 
 function pushTimelineEvent(entry) {
+  // 暂停记录:先进入缓冲区,继续时再并入(不丢事件)
+  if (store.state.timelinePaused) {
+    const buffer = (store.state.pausedBuffer || []).concat([entry])
+    if (buffer.length > 500) buffer.splice(0, buffer.length - 500)
+    store.set({ pausedBuffer: buffer })
+    return
+  }
   const timeline = store.state.timeline.concat([entry])
   if (timeline.length > 500) timeline.splice(0, timeline.length - 500)
   store.set({ timeline: timeline })
@@ -481,7 +598,10 @@ bridge.onMessage(function (message) {
       break
 
     case 'timeline:list':
-      store.set({ timeline: Array.isArray(message.data) ? message.data : [] })
+      store.set({
+        timeline: Array.isArray(message.data) ? message.data : [],
+        pausedBuffer: []
+      })
       break
 
     case 'timeline:event':

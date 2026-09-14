@@ -157,6 +157,8 @@
       version: payload.version || null,
       updateCount: prev ? prev.updateCount : 0,
       lastDuration: prev ? prev.lastDuration : 0,
+      // 累计渲染耗时(用于面板展示平均耗时 / 找出高频慢组件)
+      totalDuration: prev && prev.totalDuration ? prev.totalDuration : 0,
       lastUpdate: now(),
       isRoot: !payload.parentUid
     }
@@ -182,6 +184,7 @@
     if (!meta) return
     meta.updateCount++
     meta.lastDuration = payload.duration || 0
+    meta.totalDuration = (meta.totalDuration || 0) + meta.lastDuration
     meta.lastUpdate = now()
     pushTimeline({
       event: 'component:updated',
@@ -308,6 +311,7 @@
         isComponent: meta.isComponent,
         updateCount: meta.updateCount,
         lastDuration: meta.lastDuration,
+        totalDuration: meta.totalDuration || 0,
         // 路由相关组件(Switch / Link)在树上标注其路由信息
         route: routeBadgeFor(hook && hook.getInstance(uid), meta),
         children: []
@@ -369,8 +373,9 @@
     seen = seen || []
     var type = typeof value
 
-    if (value === null) return { type: 'null', preview: 'null', editable: false }
-    if (type === 'undefined') return { type: 'undefined', preview: 'undefined', editable: false }
+    // null / undefined 同样标记为可编辑:面板据此提供「写入新值」的入口
+    if (value === null) return { type: 'null', preview: 'null', editable: true }
+    if (type === 'undefined') return { type: 'undefined', preview: 'undefined', editable: true }
 
     if (type === 'string') return { type: 'string', value: value, preview: quote(value), editable: true }
     if (type === 'number') return { type: 'number', value: value, preview: String(value), editable: true }
@@ -475,6 +480,117 @@
       lengthInfo: lengthInfo,
       editable: false
     }
+  }
+
+  /**
+   * 把任意值转换为 JSON 安全的纯数据(供面板「以 JSON 编辑」)
+   * DOM / 函数 / 循环引用等不可序列化内容会转为可读字符串,避免抛错
+   */
+  function toJsonSafe(value, seen, depth) {
+    seen = seen || []
+    depth = depth || 0
+    var type = typeof value
+
+    if (value === null) return null
+    if (type === 'undefined') return undefined
+    if (type === 'string') return truncate(value, 2000)
+    if (type === 'number' || type === 'boolean') return value
+    if (type === 'bigint') return String(value)
+    if (type === 'symbol') return String(value)
+    if (type === 'function') return '[Function ' + (value.name || 'anonymous') + ']'
+
+    if (typeof Node !== 'undefined' && value instanceof Node) return serializeDom(value).preview
+    if (value instanceof Date) return value.toISOString()
+    if (value instanceof RegExp) return String(value)
+
+    if (seen.indexOf(value) > -1) return '[Circular]'
+    if (depth >= MAX_DEPTH) return Array.isArray(value) ? '[Array]' : '[Object]'
+
+    var nextSeen = seen.concat([value])
+
+    if (Array.isArray(value)) {
+      var arr = []
+      var arrayLimit = Math.min(value.length, MAX_ENTRIES)
+      for (var i = 0; i < arrayLimit; i++) {
+        arr.push(toJsonSafe(safeGet(value, i), nextSeen, depth + 1))
+      }
+      return arr
+    }
+
+    if (Object.prototype.toString.call(value) === '[object Map]') {
+      var mapObj = {}
+      var mapCount = 0
+      value.forEach(function (v, k) {
+        if (mapCount >= MAX_ENTRIES) return
+        mapCount++
+        mapObj[String(k)] = toJsonSafe(v, nextSeen, depth + 1)
+      })
+      return mapObj
+    }
+
+    if (Object.prototype.toString.call(value) === '[object Set]') {
+      var setArr = []
+      var setCount = 0
+      value.forEach(function (v) {
+        if (setCount >= MAX_ENTRIES) return
+        setCount++
+        setArr.push(toJsonSafe(v, nextSeen, depth + 1))
+      })
+      return setArr
+    }
+
+    if (!isPlainObject(value)) return Object.prototype.toString.call(value)
+
+    var out = {}
+    var keys = Object.keys(value)
+    var limit = Math.min(keys.length, MAX_ENTRIES)
+    for (var j = 0; j < limit; j++) {
+      out[keys[j]] = toJsonSafe(safeGet(value, keys[j]), nextSeen, depth + 1)
+    }
+    return out
+  }
+
+  /** 解析 data 上的目标值(仅 data 可编辑,其余分区只读) */
+  function resolveDataTarget(vm, source, path) {
+    if (source !== 'data') return { ok: false, error: '仅 data 支持编辑(其他分区为只读)' }
+    var root = vm.data
+    if (!root || typeof root !== 'object') return { ok: false, error: 'data 不是可编辑对象' }
+    var trail = Array.isArray(path) ? path : []
+    var target = root
+    for (var i = 0; i < trail.length; i++) {
+      target = target === null || target === undefined ? undefined : safeGet(target, trail[i])
+      if (target === null || target === undefined) {
+        return { ok: false, error: '路径不存在: data.' + trail.slice(0, i + 1).join('.') }
+      }
+    }
+    return { ok: true, value: target }
+  }
+
+  /**
+   * 读取 data 上的目标值并转为 JSON 文本(供面板「以 JSON 编辑」)
+   * 超过深度 / 条目上限的内容会被截断,DOM、函数、循环引用转为可读字符串
+   */
+  function getRawJson(uid, source, path) {
+    var vm = hook && hook.getInstance(uid)
+    if (!vm) return { ok: false, error: '组件实例已销毁' }
+
+    var resolved = resolveDataTarget(vm, source, path)
+    if (!resolved.ok) return resolved
+
+    var value = resolved.value
+    var valueType = Array.isArray(value)
+      ? 'array'
+      : (value && typeof value === 'object' ? 'object' : typeof value)
+
+    var json
+    try {
+      json = JSON.stringify(toJsonSafe(value, [], 0), null, 2)
+    } catch (e) {
+      return { ok: false, error: '序列化失败: ' + ((e && e.message) || String(e)) }
+    }
+    if (json === undefined) json = 'null'
+
+    return { ok: true, json: json, valueType: valueType, huge: json.length > 200000 }
   }
 
   /* ------------------------------------------------------------------ */
@@ -590,7 +706,8 @@
       childrenCount: vm._KeyMapComponent ? vm._KeyMapComponent.size : 0,
       el: serializeDom(vm.el),
       updateCount: meta ? meta.updateCount : 0,
-      lastDuration: meta ? meta.lastDuration : 0
+      lastDuration: meta ? meta.lastDuration : 0,
+      totalDuration: meta ? meta.totalDuration || 0 : 0
     }
   }
 
@@ -608,9 +725,14 @@
         return n
       }
       case 'boolean': return descriptor.value === true || descriptor.value === 'true'
+      case 'bigint': return BigInt(descriptor.value)
       case 'null': return null
       case 'undefined': return undefined
-      case 'json': return JSON.parse(descriptor.value)
+      case 'json': {
+        var text = String(descriptor.value == null ? '' : descriptor.value).trim()
+        if (!text) throw new Error('JSON 不能为空')
+        return JSON.parse(text)
+      }
       default: return descriptor.value
     }
   }
@@ -628,8 +750,37 @@
     if (!root || typeof root !== 'object') {
       return { ok: false, error: source + ' 不是可编辑对象' }
     }
-    if (!path || !path.length) {
-      return { ok: false, error: 'path 不能为空' }
+    if (!Array.isArray(path)) {
+      return { ok: false, error: 'path 不合法' }
+    }
+
+    var newValue = parseDescriptor(descriptor)
+
+    // 空 path:整体替换 data 根对象
+    // 逐键增删而非替换 vm.data 引用,保证响应式仍按字段粒度触发更新
+    if (!path.length) {
+      if (!isPlainObject(newValue)) {
+        return { ok: false, error: 'data 根必须是一个对象' }
+      }
+      try {
+        var oldKeys = Object.keys(root)
+        for (var d = 0; d < oldKeys.length; d++) {
+          if (!Object.prototype.hasOwnProperty.call(newValue, oldKeys[d])) delete root[oldKeys[d]]
+        }
+        var newKeys = Object.keys(newValue)
+        for (var n = 0; n < newKeys.length; n++) root[newKeys[n]] = newValue[newKeys[n]]
+      } catch (e) {
+        return { ok: false, error: '写入失败: ' + ((e && e.message) || String(e)) }
+      }
+
+      pushTimeline({
+        event: 'component:state-change',
+        uid: uid,
+        name: (state.meta.get(uid) || {}).name || vm.name,
+        path: source + '(整体替换)',
+        timestamp: now()
+      })
+      return { ok: true, value: serializeValue(newValue, 0, []) }
     }
 
     var parent = root
@@ -641,7 +792,6 @@
     }
 
     var key = path[path.length - 1]
-    var newValue = parseDescriptor(descriptor)
 
     try {
       if (Array.isArray(parent) && key === 'length') {
@@ -688,6 +838,44 @@
       return { ok: false, error: ((e && e.message) || String(e)) }
     }
     return { ok: true }
+  }
+
+  /**
+   * 为「未定义 data」的组件初始化一个空的响应式 data 对象
+   *
+   * bindview 在 config.data 未定义时会把 vm.data 置为 null(见 Init.js),
+   * 此时无法新增属性。这里复用框架自身的代理工厂 vm._DataProxy({}),
+   * 保证新对象同样是响应式的(写入会经调度器触发 render + diff)。
+   *
+   * @returns {Object} { ok, existed, error }
+   */
+  function initComponentData(uid) {
+    var vm = hook && hook.getInstance(uid)
+    if (!vm) return { ok: false, error: '组件实例已销毁' }
+
+    if (vm.data && typeof vm.data === 'object') {
+      return { ok: true, existed: true }
+    }
+    if (typeof vm._DataProxy !== 'function') {
+      return { ok: false, error: '当前 bindview 版本未暴露 _DataProxy,无法初始化 data' }
+    }
+
+    try {
+      // 必须用 call(vm) 调用:DataProxy 以 this 作为组件实例来创建并缓存代理
+      vm.data = vm._DataProxy.call(vm, {})
+    } catch (e) {
+      return { ok: false, error: '初始化失败: ' + ((e && e.message) || String(e)) }
+    }
+
+    pushTimeline({
+      event: 'component:state-change',
+      uid: uid,
+      name: (state.meta.get(uid) || {}).name || vm.name,
+      path: 'data(初始化)',
+      timestamp: now()
+    })
+    scheduleRouterInfo()
+    return { ok: true, existed: false }
   }
 
   /**
@@ -1279,6 +1467,24 @@
     },
     deleteState: function (params) {
       return deleteComponentState(params.uid, params.source, params.path)
+    },
+    getRawJson: function (params) {
+      return getRawJson(params.uid, params.source, params.path)
+    },
+    initData: function (params) {
+      return initComponentData(params.uid)
+    },
+    exposeInstance: function (params) {
+      var vm = hook && hook.getInstance(params.uid)
+      if (!vm) return { ok: false, error: '组件实例已销毁' }
+      // 把真实实例挂到页面 window,便于在控制台直接以 $vm 操作
+      try {
+        window.$vm = vm
+        window.$bv = vm
+      } catch (e) {
+        return { ok: false, error: (e && e.message) || String(e) }
+      }
+      return { ok: true, name: vm.name || '' }
     },
     invokeMethod: function (params) {
       return invokeComponentMethod(params.uid, params.name, params.args)

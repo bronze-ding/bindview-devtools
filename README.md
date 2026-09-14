@@ -6,7 +6,7 @@
 - 🔍 **状态检查** —— 序列化响应式 `data`、`props`、`refs`、`methods` 与生命周期,并展示更新次数与渲染耗时(最近 / 平均 / 累计)
 - ✏️ **状态编辑** —— 就地修改基础类型、以 JSON 编辑对象 / 数组、删除与新增属性,直接写回 bindview 的 Proxy 并触发响应式更新
 - 🖥️ **控制台联动** —— 把选中组件实例暴露为页面控制台的 `$vm`,便于手动调试
-- 🎯 **组件高亮** —— 鼠标悬停组件节点时在页面中高亮对应 DOM(由右上角开关统一控制),另支持「定位到页面」滚动定位
+- 🎯 **组件高亮** —— 鼠标悬停组件节点时在页面中高亮对应 DOM(由右上角开关统一控制),另支持「定位到页面」:滚动到该元素并**闪烁描边**提示
 - ⏱️ **事件时间线** —— 记录组件创建 / 更新(含渲染耗时)/ 销毁 / 状态修改 / 路由跳转,支持暂停记录与关键字过滤
 - 🧭 **路由面板** —— 展示 bindview-router 的模式、当前 / 上一路由、query、各级 `Switch` 命中路径、路由表,并支持编程式导航
 - 🔌 **状态徽标** —— 工具栏图标固定为彩色 logo;检测到 bindview 应用时显示**绿色徽标 + 组件数量**
@@ -87,6 +87,9 @@ bindview-devtools/
 ├── manifest.json               # MV3 清单(可直接加载为扩展)
 ├── package.json
 ├── README.md
+├── LICENSE
+├── test/
+│   └── release-check.mjs       # 发布前自动化检查(静态完整性 / 语法 / 契约 / 纯逻辑单测)
 ├── assets/
 │   ├── bindview-devtools.png   # 图标源文件(747×746,用于再生成)
 │   └── icons/                  # 扩展图标资源:icon16 / 32 / 48 / 128 / 256.png
@@ -141,15 +144,30 @@ bindview-devtools/
 
 ## 四、框架侧集成
 
-为让插件获取到真实组件实例,框架需要向外派发 3 类事件。相关改动如下:
+为让插件获取到真实组件实例与调用信息,框架需要向外派发组件生命周期与方法调用事件。相关改动如下:
 
 | 文件 | 改动 |
 | --- | --- |
-| [`bindview@3/src/tools/devtools.js`](../bindview@3/src/tools/devtools.js) | 新增:全局 Hook 探测、事件派发、活跃实例登记、晚连接回放 |
-| [`bindview@3/src/core/Init.js`](../bindview@3/src/core/Init.js:84) | 初始化 `$parent` / `$props`,并在结尾派发 `component:added` |
-| [`bindview@3/src/core/createComponentExample.js`](../bindview@3/src/core/createComponentExample.js:51) | 子组件创建前注入 `$parent` 与 `$props` |
-| [`bindview@3/src/core/Update.js`](../bindview@3/src/core/Update.js:66) | 统计渲染耗时并派发 `component:updated` |
-| [`bindview@3/src/core/Remove.js`](../bindview@3/src/core/Remove.js:13) | 派发 `component:removed` 并注销实例 |
+| [`bindview@3/src/tools/devtools.js`](../bindview@3/src/tools/devtools.js) | 新增:全局 Hook 探测、事件派发(`added` / `updated` / `removed` / `method-call`)、活跃实例登记、晚连接回放 |
+| [`bindview@3/src/core/Component.js`](../bindview@3/src/core/Component.js:37) | 根实例创建后派发 `component:added` |
+| [`bindview@3/src/core/createComponentExample.js`](../bindview@3/src/core/createComponentExample.js:54) | 子组件创建前注入 `_parent` / `_props` 与 `_key`,创建后派发 `component:added` |
+| [`bindview@3/src/core/Init.js`](../bindview@3/src/core/Init.js:89) | 兜底初始化 `_parent` / `_props`(根实例为 `null`) |
+| [`bindview@3/src/core/Update.js`](../bindview@3/src/core/Update.js:94) | 统计渲染耗时并派发 `component:updated` |
+| [`bindview@3/src/core/Remove.js`](../bindview@3/src/core/Remove.js:15) | 派发 `component:removed` 并注销实例;**销毁子组件不再受 `linkage` 影响** |
+| [`bindview@3/src/core/HandleMethods.js`](../bindview@3/src/core/HandleMethods.js:20) | 以包装函数替代 `bind`,方法被调用时上报 `component:method-call`(页面调用与面板调用走同一包装,由后端去重) |
+
+#### `linkage` 的语义
+
+`linkage` 是组件配置项(默认 `true`),**仅用于控制「父组件更新时是否联动该子组件更新」**,不参与销毁行为:
+
+| 位置 | 行为 |
+| --- | --- |
+| [`updateComponent.js`](../bindview@3/src/core/updateComponent.js:12) | 父组件更新时,只对 `_linkage === true` 的子组件 `queueJob`(不联动 `linkage: false` 的子组件) |
+| [`Remove.js`](../bindview@3/src/core/Remove.js:24) | 父组件销毁时**无条件**销毁并注销全部子组件 —— 销毁属于结构生命周期,与联动开关无关 |
+
+> 早期 `Remove.js` 也用 `linkage` 决定是否销毁子组件,会导致 `linkage: false` 的子组件在父组件销毁后**残留实例与注册表引用**、
+> `destroyed` 生命周期不触发。现已移除该判断。
+> 调试器会在组件树上为 `linkage: false` 的组件显示橙色 **`linkage:false`** 徽标,便于排查「父组件更新未传播到子组件」。
 
 框架暴露的调试 API(可从应用侧使用):
 
@@ -208,6 +226,9 @@ export function emitDevtools(event, payload) {
 - **悬停**节点 → 页面中高亮对应 DOM(高亮由右上角「高亮」开关统一控制,**默认开启**,关闭后悬停不再高亮)
 - **点击**节点 → 仅在右侧显示组件详情,**不再触发页面高亮**;组件更新时节点会闪烁提示
 - **路由标注** → 仅路由组件:`Switch` 节点显示该级别命中路径、`Link` 节点显示跳转目标
+- **联动标注** → 配置了 `linkage: false` 的组件显示橙色 **`linkage:false`** 徽标(该组件不参与父组件的数据更新联动)
+- **定位到页面**(检查器头部按钮)→ 滚动到该元素并**闪烁描边**;若页面不足一屏或元素已在视口内,会提示「无需滚动」
+  —— 这两种情况 `scrollIntoView` 本来就没有位移,闪烁与提示用于确认定位确实生效
 
 ### 状态检查与编辑
 
@@ -287,6 +308,12 @@ $vm.methods.increment()  // 调用组件方法
 
 - 通过顶部筛选按钮查看「全部 / 更新 / 创建 / 销毁 / 状态 / 方法 / 路由」
 - 「更新」事件附带本次 `render + diff` 耗时
+- 「方法」记录**页面内调用与面板调用**两类,分别标注 `页面调用 · 参数 N 个` / `面板调用 · 参数 N 个`,并附带同步执行耗时;
+  两者走同一个方法包装,后端按来源去重,面板调用不会重复记录
+- 「状态」记录**调试器发起的 `data` 变更**:就地编辑 / 新增属性 / 删除属性 / 初始化 data / 整体替换;
+  目标列为 `data.字段`(删除为 `data.字段(删除)`、整体替换为 `data(整体替换)`、初始化为 `data(初始化)`)
+- **值未变化时不会写入、也不会记录**(框架的 `set` trap 对同值写入直接返回,不触发更新);
+  页面自身修改 `data` 目前不产生该事件,只会看到随之而来的「组件更新」
 - 右侧 **过滤框** 按事件名 / 目标 / 组件名做关键字筛选
 - **「暂停 / 继续」** 控制记录:暂停期间新事件进入缓冲区(按钮上显示待入条数),继续时一次性并入,**不丢事件**
 - 「清空」同时清理时间线与缓冲区(仅清调试器记录)
@@ -298,14 +325,18 @@ $vm.methods.increment()  // 调用组件方法
 
 | 区块 | 内容 |
 | --- | --- |
-| 路由状态 | 是否安装、模式(`hash` / `history`)、版本、当前路由、上一路由、query、当前命中组件、页面标题、浏览器地址 |
-| 路由层级 | 每个 `Switch` 组件(按 `rank` 排序)当前命中的路径与对应组件,并标注「守卫」「异步:组件名」「类名」「当前命中」;点击可定位到该组件 |
+| 路由状态 | 是否安装、模式(`hash` / `history`)、版本、当前路由、上一路由、query、当前命中组件、页面标题、浏览器地址。「当前组件」优先取路由表条目;**未注册路由表时由命中的 `Switch` 实际渲染出的子组件推断** |
+| 路由层级 | 每个 `Switch` 组件(按 `rank` 排序)当前命中的路径与对应组件(同样支持上述推断回退),并标注「守卫」「异步:组件名」「类名」「当前命中」;点击可定位到该组件 |
 | 路由表 | `CreateRouterTable` 创建的路由表及全部 `path`(含各 path 对应的组件);支持按路径 / 组件名过滤,当前命中的 path 高亮,点击可直接跳转 |
 | 导航历史 | 最近 100 条跳转(`oldURL → newURL` 与 query),高亮当前所处位置,并可一键清空(仅清调试器记录,不影响浏览器会话历史) |
 | 导航 | 输入路径或完整 URL(如 `/A`、`#/A?id=1`、`http://host/#/A?id=1`,自动解析 query)、可选 query JSON(填写则覆盖地址中的 query);支持「跳转」「后退」「前进」与 `$go(n)` 相对跳转,后退 / 前进按钮会依据历史指针自动禁用 |
 
 > 多个 `Switch` 在挂载时会各自触发一次 `Bus.emit`,后端已按 `newURL + query` 去重,不会产生重复的导航记录。
 > 面板触发的跳转由 `router:navigate` 事件统一记录,时间线中不再出现重复条目。
+>
+> 「当前组件」的两种来源:① 路由表中与当前路径**精确相等**的条目;② 未使用 `CreateRouterTable` 时
+> (例如用 `Switch` 的 render-prop 手写 `switch (path)` 映射),取命中 `Switch` 的**子组件实例**。
+> 两者都拿不到时显示 `—` 并标注具体原因。
 
 ### 设置
 
@@ -396,6 +427,14 @@ $vm.methods.increment()  // 调用组件方法
 
 ## 七、常见问题
 
+**「路由」页签的「当前组件」显示 `—`**
+: 面板会直接标注属于哪种情况:
+
+- `—(未注册路由表,且无可推断的 Switch 组件)` —— 应用未调用 `CreateRouterTable`(例如用 `Switch` 的 render-prop
+  手写映射),且当前 `Switch` 渲染的是普通节点(如 404 `div`),没有组件实例可供推断;
+- `—(当前路径未命中路由表)` —— 已注册路由表,但当前路径与表中 `path` **不精确相等**
+  (如表里配 `/A`,当前是 `/a`、`/A/`)。路由匹配是精确键匹配,不做前缀 / 大小写 / 尾斜杠归一化。
+
 **改了代码后面板不更新 / 数据还是旧的**(最常见)
 : 通常是**没有重新加载**导致,扩展与页面需要分别重载:
 
@@ -433,6 +472,14 @@ $vm.methods.increment()  // 调用组件方法
 : 后端会对 Hook 在启用前缓存的事件做一次性回放;若扩展安装晚于页面打开,框架会通过
 `__BINDVIEW_DEVTOOLS_HOOK_REPLAY__` 补发全量快照。仍不完整时点击「刷新」。
 
+**点击「定位到页面」没有明显反应**
+: 定位会**滚动到目标元素 + 闪烁描边**,并在面板显示结果提示:
+
+- 提示「页面内容未超出视口,无需滚动」→ 页面不足一屏、不存在可滚动区域,`scrollIntoView` 本身不会产生任何位移,
+  此时靠**闪烁描边**确认定位已生效(这不是故障);
+- 提示「元素已在视口内,无需滚动」→ 目标本来就在可见区域;
+- 提示「该组件没有可定位的 DOM 元素」→ 组件实例没有 `el`(例如挂载失败或为纯逻辑组件)。
+
 **修改数据后视图未变化**
 : 只有写在响应式 `data` 上的字段才会驱动更新。`props` 与 `refs` 属**只读分区**,
 面板不提供编辑入口(标题旁标有「只读」);后端也会拒绝任何针对 `props` 的写入请求。
@@ -457,6 +504,26 @@ $vm.methods.increment()  // 调用组件方法
    避免「握手因时序丢失 → 静默漏推更新」这类难排查的问题。
 
 ---
+
+## 九、开发与自测
+
+本目录自带一套**不依赖浏览器**的发布前检查:
+
+```bash
+cd bindview-devtools
+npm test        # 等价于 node --experimental-vm-modules test/release-check.mjs
+```
+
+覆盖四类内容:
+
+| 类别 | 检查项 |
+| --- | --- |
+| 静态完整性 | `manifest.json` 必需字段与权限、其引用的全部文件存在;三个 HTML 入口引用的 css / js / 图标存在;版本号与 `package.json` 一致;LICENSE、README、图标资源齐全 |
+| 语法解析 | 插件(`src/**`)、框架(`bindview@3/src/**`)、路由(`bindview-router/src/**`)全部 JS 文件可被模块解析器解析 |
+| 契约一致性 | 面板调用的 RPC ⊆ 后端 `rpcHandlers`;面板 ↔ 后端 / 后台的消息 `type` 双向闭合;框架上报事件 ⊆ 后端订阅;内容脚本 ↔ 后台消息闭合 |
+| 纯逻辑单测 | 值解析(`descriptorFromRaw`)、树过滤(`filterTree`)、徽标与检查器口径一致、路由「当前组件」文案、类型描述符解析、JSON 安全序列化、无路由表时的组件推断 |
+
+> 涉及浏览器 API 的交互(面板渲染、高亮遮罩、路由跳转、工具栏徽标等)无法自动化,发布前需人工冒烟验证。
 
 ## License
 

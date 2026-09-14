@@ -297,7 +297,16 @@ const api = {
   },
 
   scrollTo: function (uid) {
-    rpc.call('scrollTo', { uid: uid }).catch(function () { /* ignore */ })
+    rpc.call('scrollTo', { uid: uid }).then(function (res) {
+      if (!res || !res.ok) {
+        api.toast((res && res.error) || '定位失败')
+        return
+      }
+      // 页面不足一屏 / 元素已在视口内时不会有滚动位移,用提示说明原因(元素仍会闪烁)
+      api.toast(res.msg || '已定位到该组件')
+    }).catch(function () {
+      api.toast('定位失败:未连接到页面')
+    })
   },
 
   routerRefresh: function () {
@@ -474,6 +483,10 @@ const api = {
       .then(function (result) {
         if (!result || !result.ok) {
           store.set({ error: (result && result.error) || '写入失败' })
+        } else if (result.unchanged) {
+          // 值未变化:框架不会触发更新,这里同步给出提示,避免误以为写入失败
+          store.set({ error: null })
+          api.toast('值未变化,未写入')
         } else {
           store.set({ error: null })
         }

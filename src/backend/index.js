@@ -33,6 +33,8 @@
   var overlayLabel = null
   var overlayTarget = null
   var timelineSeq = 0
+  /** 面板发起的方法调用守卫(用于与方法上报事件去重) */
+  var panelCall = null
 
   var state = {
     /** uid -> meta */
@@ -148,6 +150,7 @@
     if (!payload || !payload.uid) return
     var uid = payload.uid
     var prev = state.meta.get(uid)
+    var instance = payload.instance || (hook && hook.getInstance(uid)) || null
 
     var meta = {
       uid: uid,
@@ -155,6 +158,10 @@
       parentUid: payload.parentUid || null,
       isComponent: !!payload.isComponent,
       version: payload.version || null,
+      // 联动开关:框架配置项 linkage(默认 true),
+      // 仅控制「父组件更新时是否联动该组件更新」(见 updateComponent.js),
+      // 为 false 时面板在组件树上显示徽标,便于排查「父组件更新未传播到子组件」。
+      linkage: instance ? safeGet(instance, '_linkage') !== false : (prev ? prev.linkage : true),
       updateCount: prev ? prev.updateCount : 0,
       lastDuration: prev ? prev.lastDuration : 0,
       // 累计渲染耗时(用于面板展示平均耗时 / 找出高频慢组件)
@@ -164,7 +171,7 @@
     }
     state.meta.set(uid, meta)
     if (state.order.indexOf(uid) === -1) state.order.push(uid)
-    if (payload.instance && hook) hook.addInstance(uid, payload.instance)
+    if (instance && hook) hook.addInstance(uid, instance)
 
     if (!silent) {
       pushTimeline({
@@ -200,6 +207,29 @@
       updateCount: meta.updateCount,
       lastDuration: meta.lastDuration,
       totalDuration: meta.totalDuration || 0
+    })
+  }
+
+  /**
+   * 方法调用(由框架 HandleMethods 的方法包装上报)
+   *
+   * 页面内调用与面板调用都会走到这里(面板调用经过同一包装函数),
+   * 通过 panelCall 守卫识别来源,避免面板调用被记录两次。
+   */
+  function onMethodCall(payload) {
+    if (!payload || !payload.uid) return
+    var fromPanel = !!(panelCall &&
+      panelCall.uid === payload.uid &&
+      panelCall.name === payload.name)
+    if (fromPanel) panelCall.reported = true
+
+    pushTimeline({
+      event: 'component:method-call',
+      uid: payload.uid,
+      name: payload.name + '()',
+      path: (fromPanel ? '面板调用' : '页面调用') + ' · 参数 ' + (payload.argsCount || 0) + ' 个',
+      duration: typeof payload.duration === 'number' ? payload.duration : 0,
+      timestamp: payload.timestamp || now()
     })
   }
 
@@ -311,6 +341,8 @@
         uid: uid,
         name: meta.name,
         isComponent: meta.isComponent,
+        // linkage:false 时树上显示徽标
+        linkage: meta.linkage !== false,
         updateCount: meta.updateCount,
         lastDuration: meta.lastDuration,
         totalDuration: meta.totalDuration || 0,
@@ -795,6 +827,15 @@
 
     var key = path[path.length - 1]
 
+    // 值未变化时不记录时间线:框架 Proxy 的 set trap 对同值写入会直接返回、不触发更新,
+    // 若仍记为「状态修改」,会造成「改了却没有组件更新」的误导
+    var unchanged = (Array.isArray(parent) && key === 'length')
+      ? parent.length === newValue
+      : safeGet(parent, key) === newValue
+    if (unchanged) {
+      return { ok: true, unchanged: true, value: serializeValue(newValue, 0, []) }
+    }
+
     try {
       if (Array.isArray(parent) && key === 'length') {
         parent.length = newValue
@@ -833,12 +874,44 @@
       if (parent === null || parent === undefined) return { ok: false, error: '路径不存在' }
     }
     var key = path[path.length - 1]
-    try {
-      if (Array.isArray(parent)) parent.splice(Number(key), 1)
-      else delete parent[key]
-    } catch (e) {
-      return { ok: false, error: ((e && e.message) || String(e)) }
+
+    // Map / Set 的条目键不是可寻址的属性,直接 delete / splice 会静默无效
+    if (parent instanceof Map) {
+      return { ok: false, error: 'Map 的条目不支持删除,可直接编辑整个 Map' }
     }
+    if (parent instanceof Set) {
+      return { ok: false, error: 'Set 的条目不支持删除,可直接编辑整个 Set' }
+    }
+
+    if (Array.isArray(parent)) {
+      // 仅接受合法下标:Number('length') / Number('foo') 均为 NaN,
+      // 而 splice(NaN, 1) 会退化为「删掉首元素」,必须提前拦截
+      var index = Number(key)
+      if (!Number.isInteger(index) || index < 0 || index >= parent.length) {
+        return { ok: false, error: '数组下标不合法: ' + key }
+      }
+      try {
+        parent.splice(index, 1)
+      } catch (e) {
+        return { ok: false, error: ((e && e.message) || String(e)) }
+      }
+    } else {
+      try {
+        delete parent[key]
+      } catch (e) {
+        return { ok: false, error: ((e && e.message) || String(e)) }
+      }
+    }
+
+    // 删除同样是状态变更,与编辑保持一致地记入时间线
+    pushTimeline({
+      event: 'component:state-change',
+      uid: uid,
+      name: (state.meta.get(uid) || {}).name || vm.name,
+      path: source + '.' + path.join('.') + '(删除)',
+      timestamp: now()
+    })
+
     return { ok: true }
   }
 
@@ -895,22 +968,32 @@
     var list = Array.isArray(args) ? args : []
     var started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
 
+    // 框架的方法包装会在调用期间上报 component:method-call,由 onMethodCall 统一记录;
+    // 若框架未上报(旧版本),则在此补记一条,避免面板调用完全没有记录。
+    panelCall = { uid: uid, name: name, reported: false }
+
     var result
     try {
       result = fn.apply(null, list)
     } catch (e) {
+      panelCall = null
       return { ok: false, error: (e && e.message) || String(e) }
     }
 
-    var ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+    var reported = panelCall.reported
+    panelCall = null
 
-    pushTimeline({
-      event: 'component:method-call',
-      uid: uid,
-      name: name + '()',
-      path: '参数 ' + list.length + ' 个',
-      timestamp: now()
-    })
+    if (!reported) {
+      pushTimeline({
+        event: 'component:method-call',
+        uid: uid,
+        name: name + '()',
+        path: '面板调用 · 参数 ' + list.length + ' 个',
+        timestamp: now()
+      })
+    }
+
+    var ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
 
     return {
       ok: true,
@@ -1039,15 +1122,78 @@
     return true
   }
 
+  /**
+   * 短暂描边闪烁目标元素
+   *
+   * 「定位到页面」在页面内容不足一屏(无滚动条)或元素已在视口内时,
+   * scrollIntoView 不会产生任何可见变化,容易被误认为「点了没反应」。
+   * 这里用 outline 做一次闪烁提示(outline 不参与布局,不会引起抖动),
+   * 结束后精确还原原有内联值。
+   */
+  function flashElement(el) {
+    try {
+      var prevOutline = el.style.outline
+      var prevOffset = el.style.outlineOffset
+      el.style.outline = '2px solid #41b883'
+      el.style.outlineOffset = '2px'
+      setTimeout(function () {
+        try {
+          el.style.outline = prevOutline
+          el.style.outlineOffset = prevOffset
+        } catch (e) {
+          /* 元素已被移除时忽略 */
+        }
+      }, 700)
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  /**
+   * 滚动定位到组件对应的 DOM
+   *
+   * @returns {Object} { ok, msg?, error? }
+   *   msg 用于向面板说明「为何看不到滚动」:
+   *   - 页面不可滚动(内容未超出视口)
+   *   - 元素本就在视口内
+   */
   function scrollToComponent(uid) {
     var vm = hook && hook.getInstance(uid)
-    if (!vm || !(vm.el instanceof HTMLElement)) return false
-    try {
-      vm.el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' })
-    } catch (e) {
-      vm.el.scrollIntoView()
+    if (!vm || !(vm.el instanceof HTMLElement)) {
+      return { ok: false, error: '该组件没有可定位的 DOM 元素' }
     }
-    return true
+
+    var el = vm.el
+    var rect = el.getBoundingClientRect()
+    var viewportH = window.innerHeight || document.documentElement.clientHeight
+    var viewportW = window.innerWidth || document.documentElement.clientWidth
+
+    var scrollable =
+      document.documentElement.scrollHeight > viewportH + 1 ||
+      document.documentElement.scrollWidth > viewportW + 1
+    var inViewport =
+      rect.top >= 0 && rect.bottom <= viewportH &&
+      rect.left >= 0 && rect.right <= viewportW
+
+    try {
+      el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' })
+    } catch (e) {
+      try { el.scrollIntoView() } catch (e2) { /* ignore */ }
+    }
+
+    // 无论能否滚动都闪烁一次,保证操作有可见反馈
+    flashElement(el)
+
+    var msg = '已滚动到该组件并闪烁提示'
+    if (rect.height === 0 && rect.width === 0) {
+      msg = '该组件无可见尺寸,已闪烁定位(可能是空节点)'
+    } else if (!scrollable) {
+      msg = '页面内容未超出视口,无需滚动 —— 已闪烁定位元素'
+    } else if (inViewport) {
+      msg = '元素已在视口内,无需滚动 —— 已闪烁定位元素'
+    }
+
+    return { ok: true, msg: msg, scrollable: scrollable, inViewport: inViewport }
   }
 
   /* ------------------------------------------------------------------ */
@@ -1109,6 +1255,46 @@
   }
 
   /**
+   * 取组件实例的子组件名(来自框架的 _KeyMapComponent 映射)
+   * Switch 命中后渲染出的组件实例即「当前路由组件」
+   */
+  function childComponentNames(vm) {
+    var out = []
+    if (!vm) return out
+    var map = safeGet(vm, '_KeyMapComponent')
+    if (!map || typeof map.forEach !== 'function') return out
+    try {
+      map.forEach(function (child) {
+        if (child && child.name) out.push(String(child.name))
+      })
+    } catch (e) {
+      /* ignore */
+    }
+    return out
+  }
+
+  /**
+   * 从「命中的 Switch」推断当前实际渲染的路由组件
+   *
+   * 适用于未使用 CreateRouterTable 的应用(例如用 Switch 的 render-prop 手写映射),
+   * 此时没有路由表可供查询,但 Switch 的子组件实例就是当前路由组件。
+   * 取 rank 最大(最内层)且确实渲染出组件的 Switch;渲染的是普通节点(如 404 div)时返回 null。
+   */
+  function inferRenderedComponent(levels) {
+    for (var i = levels.length - 1; i >= 0; i--) {
+      var vm = hook && hook.getInstance(levels[i].uid)
+      var names = childComponentNames(vm)
+      if (!names.length) continue
+      return {
+        path: levels[i].path,
+        component: { kind: 'component', name: names[0] },
+        via: 'switch'
+      }
+    }
+    return null
+  }
+
+  /**
    * 收集 Switch 组件,重建每一级实际命中的路由
    * Switch 的 data.path 即该 rank 级别匹配到的路径前缀
    */
@@ -1124,13 +1310,17 @@
       var asyncMap = props ? safeGet(props, 'async') : null
       var levelPath = (data ? String(safeGet(data, 'path') || '') : '') || '/'
       var entry = findTableEntry(levelPath)
+      // 无路由表时回退为「该 Switch 实际渲染出的子组件」
+      var childNames = entry ? [] : childComponentNames(vm)
 
       levels.push({
         uid: uid,
         rank: props && safeGet(props, 'rank') !== undefined ? safeGet(props, 'rank') : null,
         path: levelPath,
-        // 该级别命中路径在路由表中对应的组件
-        component: entry ? entry.component : null,
+        // 该级别命中路径对应的组件:优先路由表,其次实际渲染的子组件
+        component: entry
+          ? entry.component
+          : (childNames.length ? { kind: 'component', name: childNames[0] } : null),
         guard: !!(props && typeof safeGet(props, 'defend') === 'function'),
         async: !!(asyncMap && typeof asyncMap === 'object' && Object.keys(asyncMap).length > 0),
         asyncKeys: asyncMap && typeof asyncMap === 'object' ? Object.keys(asyncMap) : [],
@@ -1277,6 +1467,9 @@
     var plugin = (hook && hook.router) || null
     var currentPath = currentRoutePath()
     var entry = findTableEntry(currentPath)
+    var levels = collectRouteLevels()
+    // 未注册路由表(如 Switch + render-prop 手写映射)时,由命中的 Switch 推断当前组件
+    var inferred = entry ? null : inferRenderedComponent(levels)
     var nav = routerState.navigation
     var pointer = routerState.pointer
 
@@ -1290,9 +1483,11 @@
         newURL: currentPath || routerState.current.newURL,
         query: instance ? normalizeQuery(instance.query) : routerState.current.query
       },
-      // 当前地址在路由表中命中的组件条目
-      rendered: entry ? { path: entry.path, component: entry.component } : null,
-      levels: collectRouteLevels(),
+      // 当前地址命中的组件:优先路由表条目,其次由命中的 Switch 推断
+      rendered: entry
+        ? { path: entry.path, component: entry.component }
+        : inferred,
+      levels: levels,
       tables: routeTablesSource(),
       navigation: nav.slice(),
       // 导航历史指针与前进 / 后退可用性(驱动面板按钮禁用态)
@@ -1501,7 +1696,7 @@
       return { ok: clearHighlight() }
     },
     scrollTo: function (params) {
-      return { ok: scrollToComponent(params.uid) }
+      return scrollToComponent(params.uid)
     },
     setHighlightEnabled: function (params) {
       return { enabled: setHighlightEnabled(params.enabled) }
@@ -1609,6 +1804,7 @@
     unsubscribers.push(hook.on('component:added', function (payload) { onComponentAdded(payload, false) }))
     unsubscribers.push(hook.on('component:updated', function (payload) { onComponentUpdated(payload) }))
     unsubscribers.push(hook.on('component:removed', function (payload) { onComponentRemoved(payload) }))
+    unsubscribers.push(hook.on('component:method-call', function (payload) { onMethodCall(payload) }))
     unsubscribers.push(hook.on('app:rescan', function (payload) { onRescan(payload) }))
     unsubscribers.push(hook.on('router:init', function (payload) { onRouterInit(payload) }))
     unsubscribers.push(hook.on('router:navigate', function (payload) { onRouterNavigate(payload) }))

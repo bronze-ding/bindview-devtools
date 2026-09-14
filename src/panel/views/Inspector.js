@@ -588,7 +588,7 @@ export function createInspector(container, api) {
       return
     }
     if (!ins) {
-      pane.appendChild(el('div', { class: 'bv-empty', text: '选择左侧组件查看其 props / data / refs' }))
+      pane.appendChild(el('div', { class: 'bv-empty', text: '选择组件查看其 props / data / refs' }))
       return
     }
     if (ins.missing) {

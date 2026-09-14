@@ -68,6 +68,7 @@ export function createSettingsView(container, api) {
     el('ul', {}, [
       el('li', { text: '组件树:展示应用根实例与所有子组件层级;支持搜索、全展开 / 全折叠。' }),
       el('li', { text: '节点统计:显示组件的更新次数与最近渲染耗时(悬停查看平均 / 累计耗时)。' }),
+      el('li', { text: '联动标注:linkage: false 的组件在树上显示徽标,便于排查「父组件更新未联动子组件」。' }),
       el('li', { text: '状态检查:序列化响应式 data、props、refs 与 methods。' }),
       el('li', { text: '状态编辑:就地编辑基础类型、以 JSON 编辑对象 / 数组、删除属性、新增属性,直接写回 bindview 的 Proxy。' }),
       el('li', { text: '方法调试:查看方法源码、以空参数调用方法并展示返回值与耗时。' }),

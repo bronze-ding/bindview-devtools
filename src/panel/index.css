@@ -1174,6 +1174,20 @@ img.bv-logo:hover {
   padding: 0 6px;
 }
 
+/* linkage:false 徽标(该组件不参与父组件的数据更新联动) */
+.bv-node-linkage {
+  flex: none;
+  margin-left: 6px;
+  font-size: 10px;
+  line-height: 15px;
+  padding: 0 6px;
+  border-radius: 8px;
+  color: var(--bv-orange);
+  border: 1px solid rgba(206, 145, 120, 0.5);
+  background: rgba(206, 145, 120, 0.12);
+  white-space: nowrap;
+}
+
 /* ------------------------- 检查器(增强) ------------------------- */
 
 /* data 分区:删除属性的入口(浮于行尾,避免影响既有排版) */

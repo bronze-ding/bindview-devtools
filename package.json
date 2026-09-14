@@ -12,7 +12,8 @@
   "license": "MIT",
   "author": "canlie",
   "scripts": {
-    "start": "echo 请开启开发者模式后『加载已解压的扩展程序』指向本目录:Chrome 用 chrome://extensions,Edge 用 edge://extensions"
+    "start": "echo 请开启开发者模式后『加载已解压的扩展程序』指向本目录:Chrome 用 chrome://extensions,Edge 用 edge://extensions",
+    "test": "node --experimental-vm-modules test/release-check.mjs"
   },
   "engines": {
     "chromium": ">=111"

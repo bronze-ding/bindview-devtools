@@ -185,6 +185,23 @@ function createNavForm(api) {
   return { el: root, update: update }
 }
 
+/**
+ * 「当前组件」文案
+ *
+ * 无法给出组件时说明原因,避免只显示一个无从判断的 `—`:
+ *  - 有路由表但当前路径未命中 → 路径与路由表不匹配
+ *  - 没有路由表 → 应用未使用 CreateRouterTable(如 Switch + render-prop 手写映射),
+ *    且当前也没有命中的 Switch 组件可供推断
+ */
+function renderedText(info) {
+  const text = componentText(info.rendered)
+  if (text !== '—') return text
+  const hasTables = (info.tables || []).length > 0
+  return hasTables
+    ? '—(当前路径未命中路由表)'
+    : '—(未注册路由表,且无可推断的 Switch 组件)'
+}
+
 function overviewSection(info) {
   const current = info.current || {}
   const rows = [
@@ -193,7 +210,7 @@ function overviewSection(info) {
     kv('查询参数', current.query && Object.keys(current.query).length ? JSON.stringify(current.query) : '—'),
     kv('路由模式', info.mode || '未知'),
     kv('插件版本', info.version ? 'v' + info.version : '—'),
-    kv('当前组件', componentText(info.rendered)),
+    kv('当前组件', renderedText(info)),
     kv('页面标题', info.title || '—'),
     kv('浏览器地址', (info.location && info.location.href) || '—')
   ]

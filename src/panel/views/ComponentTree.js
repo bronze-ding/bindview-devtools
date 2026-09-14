@@ -148,6 +148,15 @@ export function createComponentTree(container, api) {
       }))
     }
 
+    // linkage: false —— 该组件不参与父组件的数据更新联动
+    if (node.linkage === false) {
+      parts.push(el('span', {
+        class: 'bv-node-linkage',
+        text: 'linkage:false',
+        title: 'linkage: false —— 父组件更新时不会联动该组件更新'
+      }))
+    }
+
     const badge = renderUpdateBadge(node)
     if (badge) parts.push(badge)
 

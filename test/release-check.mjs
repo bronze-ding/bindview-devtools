@@ -110,6 +110,14 @@ check(
   ['icon16', 'icon32', 'icon48', 'icon128', 'icon256'].every((n) => exists('assets/icons/' + n + '.png'))
 )
 
+// 依赖最低版本声明(README 与设置页需保持一致,防止后续漂移)
+const readmeText = read('README.md')
+const settingsText = read('src/panel/views/Settings.js')
+check('README 声明 bindview ≥ 3.2.0', readmeText.indexOf('3.2.0') > -1)
+check('README 声明 bindview-router ≥ 1.2.0', readmeText.indexOf('1.2.0') > -1)
+check('README 声明 Chromium 内核要求', readmeText.indexOf('111') > -1)
+check('设置页声明最低版本要求', settingsText.indexOf('3.2.0') > -1 && settingsText.indexOf('1.2.0') > -1)
+
 const manifestRefs = []
 manifestRefs.push(manifest.devtools_page, manifest.background.service_worker, manifest.action.default_popup)
 Object.values(manifest.icons || {}).forEach((v) => manifestRefs.push(v))

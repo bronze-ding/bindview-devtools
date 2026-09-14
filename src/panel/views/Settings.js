@@ -52,11 +52,15 @@ export function createSettingsView(container, api) {
       el('span', { text: '扩展版本 1.0.0 · ' }),
       versionEl
     ]),
+    el('p', {
+      class: 'bv-muted',
+      text: '版本要求:bindview ≥ 3.2.0 · bindview-router ≥ 1.2.0(「路由」页签需要) · Chromium 内核 ≥ 111'
+    }),
     el('p', { class: 'bv-muted', text: '用于调试基于 bindview.js 构建的应用:查看组件树、检查并实时编辑组件状态、观察更新事件时间线。' }),
 
     el('h3', { text: '使用步骤' }),
     el('ol', {}, [
-      el('li', { html: '在 <b>bindview</b> 框架侧接通 devtools 钩子(见 <code>bindview@3/src/tools/devtools.js</code>)。' }),
+      el('li', { html: '在 <b>bindview ≥ 3.2.0</b> 框架侧接通 devtools 钩子(见 <code>bindview@3/src/tools/devtools.js</code>)。' }),
       el('li', { text: '打开目标页面后,在本面板查看组件树。未检测到组件时点击右上角「刷新」。' }),
       el('li', { text: '点击组件节点查看 props / data / refs;点击可编辑的值即可就地修改并触发响应式更新。' }),
       el('li', { text: '对象 / 数组可点「JSON」或分区标题的「编辑 JSON」整体改写;每行右侧「×」可删除属性,data 分区底部可新增属性。' }),
